@@ -12,7 +12,7 @@ from libc.math cimport M_PI
 
 # -----------------------------------------------------------------------------
 
-def lonlat2ecef(lon, lat, h, ellps):
+def lonlat2ecef(lon, lat, h, ellps, body='Earth'):
     """Coordinate transformation from lon/lat to ECEF.
 
     Transformation of geodetic longitude/latitude to earth-centered,
@@ -28,7 +28,10 @@ def lonlat2ecef(lon, lat, h, ellps):
         Array (with arbitrary dimensions) with elevation above ellipsoid
         [metre]
     ellps : str
-        Earth's surface approximation (sphere, GRS80 or WGS84)
+        Surface approximation (sphere, GRS80 or WGS84). Note that for the moon,
+        the ellipsoid approximations (GRS80, WGS84) produce the same result.
+    body : str
+        Planetary body to use for defining ellipsoid (Earth, Moon)
 
     Returns
     -------
@@ -49,20 +52,24 @@ def lonlat2ecef(lon, lat, h, ellps):
         raise ValueError("Input array(s) has/have incorrect data type(s)")
     if ellps not in ("sphere", "GRS80", "WGS84"):
         raise ValueError("Unknown value for 'ellps'")
+    body = body.lower()
+    if body not in ("earth", "moon"):
+        raise ValueError("Unknown value for 'body'")
 
     # Wrapper for 1-dimensional function
     shp = lon.shape
     x_ecef, y_ecef, z_ecef = _lonlat2ecef_1d(lon.ravel(), lat.ravel(),
-                                              h.ravel(), ellps)
+                                              h.ravel(), ellps, body)
     return x_ecef.reshape(shp), y_ecef.reshape(shp), z_ecef.reshape(shp)
 
 
-def _lonlat2ecef_1d(double[:] lon, double[:] lat, float[:] h, ellps):
+def _lonlat2ecef_1d(double[:] lon, double[:] lat, float[:] h, ellps, body='earth'):
     """Coordinate transformation from lon/lat to ECEF (for 1-dimensional data).
 
     Sources
     -------
     - https://en.wikipedia.org/wiki/Geographic_coordinate_conversion
+    - https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
     - Geoid parameters r, a and f: PROJ"""
 
     cdef int len_0 = lon.shape[0]
@@ -74,7 +81,11 @@ def _lonlat2ecef_1d(double[:] lon, double[:] lat, float[:] h, ellps):
 
     # Spherical coordinates
     if ellps == "sphere":
-        r = 6370997.0  # earth radius [m]
+        if body == 'earth':
+            r = 6370997.0 # m
+        else:
+            r = 1737400.0 # m
+
         for i in range(len_0):
             x_ecef[i] = (r + h[i]) * cos(deg2rad(lat[i])) \
                 * cos(deg2rad(lon[i]))
@@ -84,13 +95,22 @@ def _lonlat2ecef_1d(double[:] lon, double[:] lat, float[:] h, ellps):
         
     # Elliptic (geodetic) coordinates
     else:
-        a = 6378137.0  # equatorial radius (semi-major axis) [m]
-        if ellps == "GRS80":
-            f = (1.0 / 298.257222101)  # flattening [-]
-        else:  # WGS84
-            f = (1.0 / 298.257223563)  # flattening [-]
-        b = a * (1.0 - f)  # polar radius (semi-minor axis) [m]
+        if body == 'earth':
+            a = 6378137.0  # equatorial radius (semi-major axis) [m]
+
+            if ellps == "GRS80":
+                f = (1.0 / 298.257222101)  # flattening [-]
+            else:  # WGS84
+                f = (1.0 / 298.257223563)  # flattening [-]
+            
+            b = a * (1.0 - f)  # polar radius (semi-minor axis) [m]
+
+        else:
+            a = 1738100.0 # equatorial radius [m]
+            b = 1736000.0 # polar radius [m] corresponds to f = 0.0012
+        
         e_2 = 1.0 - (b ** 2 / a ** 2)  # squared num. eccentricity [-]
+        
         for i in range(len_0):
             n = a / sqrt(1.0 - e_2 * sin(deg2rad(lat[i])) ** 2)
             x_ecef[i] = (n + h[i]) * cos(deg2rad(lat[i])) \
@@ -449,9 +469,11 @@ class TransformerEcef2enu:
     lat_or : double
         Latitude coordinate for origin of ENU coordinate system [degree]
     ellps : str
-        Earth's surface approximation (sphere, GRS80 or WGS84)"""
+        Surface approximation (sphere, GRS80 or WGS84)
+    body : str
+        Planetary body (Earth, Moon)"""
 
-    def __init__(self, lon_or, lat_or, ellps):
+    def __init__(self, lon_or, lat_or, ellps, body='Earth'):
         if (lon_or < -180.0) or (lon_or > 180.0):
             raise ValueError("Value for 'lon_or' is outside of valid range")
         if (lat_or < -90.0) or (lat_or > 90.0):
@@ -459,21 +481,39 @@ class TransformerEcef2enu:
         self.lon_or = lon_or
         self.lat_or = lat_or
 
+        self.ellps = ellps
+        self.body = body.lower()
+
         if ellps == "sphere":
-            r = 6370997.0  # earth radius [m]
+
+            if self.body == 'earth':
+                r = 6370997.0  # earth radius [m]
+            else:
+                r = 1737400.0 # moon radius [m]
+            
             self.x_ecef_or = r * np.cos(np.deg2rad(self.lat_or)) \
                              * np.cos(np.deg2rad(self.lon_or))
             self.y_ecef_or = r * np.cos(np.deg2rad(self.lat_or)) \
                              * np.sin(np.deg2rad(self.lon_or))
             self.z_ecef_or = r * np.sin(np.deg2rad(self.lat_or))
+
         elif ellps in ("GRS80", "WGS84"):
-            a = 6378137.0  # equatorial radius (semi-major axis) [m]
-            if ellps == "GRS80":
-                f = (1.0 / 298.257222101)  # flattening [-]
-            else:  # WGS84
-                f = (1.0 / 298.257223563)  # flattening [-]
+
+            if self.body == 'earth':
+                a = 6378137.0  # equatorial radius (semi-major axis) [m]
+                if ellps == "GRS80":
+                    f = (1.0 / 298.257222101)  # flattening [-]
+                else:  # WGS84
+                    f = (1.0 / 298.257223563)  # flattening [-]
+
+            else:
+                # parameters for the moon
+                a = 1738100.0 # equatorial radius [m]
+                b = 1736000.0 # polar radius [m] corresponds to f = 0.0012
+
             b = a * (1.0 - f)  # polar radius (semi-minor axis) [m]
             e_2 = 1.0 - (b ** 2 / a ** 2)  # squared num. eccentricity [-]
+
             n = a / np.sqrt(1.0 - e_2 * np.sin(np.deg2rad(self.lat_or)) ** 2)
             self.x_ecef_or = n * np.cos(np.deg2rad(self.lat_or)) \
                              * np.cos(np.deg2rad(self.lon_or))

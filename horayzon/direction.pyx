@@ -72,7 +72,7 @@ def _surf_norm_1d(double[:] lon, double[:] lat):
 
 # -----------------------------------------------------------------------------
 
-def north_dir(x_ecef, y_ecef, z_ecef, vec_norm_ecef, ellps):
+def north_dir(x_ecef, y_ecef, z_ecef, vec_norm_ecef, ellps, body='Earth'):
     """Compute unit vectors pointing towards North.
 
     Computation unit vectors pointing towards North in earth-centered,
@@ -92,7 +92,9 @@ def north_dir(x_ecef, y_ecef, z_ecef, vec_norm_ecef, ellps):
         last dimension) with surface normal components in ECEF coordinates
         [metre]
     ellps : str
-        Earth's surface approximation (sphere, GRS80 or WGS84)
+        Surface approximation (sphere, GRS80 or WGS84)
+    body : str
+        Planetary body (Earth, Moon)
 
     Returns
     -------
@@ -113,17 +115,20 @@ def north_dir(x_ecef, y_ecef, z_ecef, vec_norm_ecef, ellps):
         raise ValueError("Input array(s) has/have incorrect data type(s)")
     if ellps not in ("sphere", "GRS80", "WGS84"):
         raise ValueError("Unknown value for 'ellps'")
+    body = body.lower()
+    if body not in ('earth', 'moon'):
+        raise ValueError("Unknown value for body")
 
     # Wrapper for 1-dimensional function
     shp = x_ecef.shape
     vec_north_ecef = _north_dir_1d(x_ecef.ravel(), y_ecef.ravel(),
                                    z_ecef.ravel(),
-                                   vec_norm_ecef.reshape(prod(shp), 3), ellps)
+                                   vec_norm_ecef.reshape(prod(shp), 3), ellps, body)
     return vec_north_ecef.reshape(shp + (3,))
 
 
 def _north_dir_1d(double[:] x_ecef, double[:] y_ecef, double[:] z_ecef,
-                  float[:, :] vec_norm_ecef, ellps):
+                  float[:, :] vec_norm_ecef, ellps, body='earth'):
     """Compute unit vectors pointing towards North (for 1-dimensional data).
 
     Sources
@@ -142,14 +147,24 @@ def _north_dir_1d(double[:] x_ecef, double[:] y_ecef, double[:] z_ecef,
     np_x = 0.0
     np_y = 0.0
     if ellps == "sphere":
-        r = 6370997.0  # earth radius [m]
+        if body == 'earth':
+            r = 6370997.0  # earth radius [m]
+        else:
+            r = 1737400.0 # moon radius [m]
         np_z = r
     else:
-        a = 6378137.0  # equatorial radius (semi-major axis) [m]
-        if ellps == "GRS80":
-            f = (1.0 / 298.257222101)  # flattening [-]
-        else:  # WGS84
-            f = (1.0 / 298.257223563)  # flattening [-]
+
+        if body == 'earth':
+            a = 6378137.0  # equatorial radius (semi-major axis) [m]
+            if ellps == "GRS80":
+                f = (1.0 / 298.257222101)  # flattening [-]
+            else:  # WGS84
+                f = (1.0 / 298.257223563)  # flattening [-]
+        else:
+            # lunar parameters
+            a = 1738100.0 # equatorial radius [m]
+            b = 1736000.0 # polar radius [m] corresponds to f = 0.0012
+
         b = a * (1.0 - f)  # polar radius (semi-minor axis) [m]
         np_z = b
 
