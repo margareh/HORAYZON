@@ -4,3 +4,6 @@ build/
 # ignore generated c files
 *.c
 *.cpp
+
+# ignore python cache files
+__pycache__
