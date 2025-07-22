@@ -12,6 +12,7 @@ import os
 import sys
 from setuptools import setup, Extension
 from Cython.Distutils import build_ext
+from Cython.Build import cythonize
 import numpy as np
 
 # -----------------------------------------------------------------------------
@@ -89,8 +90,10 @@ ext_modules = [
               language="c++")
     ]
 
+# cython_directives = {'embedsignature' : True}
+
 setup(name="horayzon",
       version="1.2",
       packages=["horayzon"],
       cmdclass={"build_ext": build_ext},
-      ext_modules=ext_modules)
+      ext_modules=cythonize(ext_modules))
